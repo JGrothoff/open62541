@@ -1,0 +1,66 @@
+name: Amalgamate FullNS0 Multithreading OpenSSL Sources
+
+on:
+  push:
+    paths:
+        - ".github/workflows/amalgamate.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build. Takes the latest v... tag when empty.'
+        required: false
+        default: ''
+
+jobs:
+  amalgamate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+  
+      - name: Set up git and fetch open62541 upstream tags
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git remote add upstream https://github.com/open62541/open62541.git
+          git fetch upstream --tags --force
+      - name: Determine tag to build
+        run: |
+          if [ "${{ github.event.inputs.tag }}" != "" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+          else
+            NEW_TAG=$(git tag -l --sort=-v:refname | head -n 1)
+            echo "tag=$NEW_TAG" >> $GITHUB_ENV
+          fi
+      - name: Fetch and checkout ${{ env.tag }}
+        run: |
+          git fetch upstream refs/tags/${{ env.tag }}:refs/tags/${{ env.tag }}  
+          git checkout tags/${{ env.tag }}
+          git submodule update --init --recursive
+
+      - name: Configure
+        run: |
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=None \
+            -DUA_ENABLE_AMALGAMATION=ON \
+            -DUA_UA_AMALGAMATION_MULTIARCH=ON \
+            -DUA_NAMESPACE_ZERO=FULL \
+            -DUA_ENABLE_DATATYPES_ALL=ON \
+            -DUA_ENABLE_ENCRYPTION=OPENSSL \
+            -DUA_MULTITHREADING=200 \
+            -DUA_LOGLEVEL=600 \
+          ..
+      - name: Build open62541.c/.h
+        working-directory: build
+        run: |
+          make -j open62541-code-generation
+          ls .
+
+      - name: Archive artifacts
+        uses: actions/upload-artifact@v4
+        with:
+            name: open62541-${{ env.tag }}
+            path: build/open62541.[ch]
+            if-no-files-found: error
